@@ -548,13 +548,6 @@ int32_t ad4110_setup(struct ad4110_dev **device,
 	ret = spi_init(&dev->spi_dev, &init_param.spi_init);
 
 	/* GPIO */
-	ret |= gpio_get(&dev->gpio_reset, &init_param.gpio_reset);
-
-	ret |= gpio_direction_output(dev->gpio_reset, GPIO_LOW);
-	mdelay(10);
-	ret |= gpio_set_value(dev->gpio_reset, GPIO_HIGH);
-	mdelay(10);
-
 	ret |= gpio_get_optional(&dev->gpio_nrdy, init_param.gpio_nrdy);
 	if (dev->gpio_nrdy)
 		ret |= gpio_direction_input(dev->gpio_nrdy);
@@ -627,8 +620,6 @@ int32_t ad4110_remove(struct ad4110_dev *dev)
 	int32_t ret;
 
 	ret = spi_remove(dev->spi_dev);
-
-	ret |= gpio_remove(dev->gpio_reset);
 
 	free(dev);
 
