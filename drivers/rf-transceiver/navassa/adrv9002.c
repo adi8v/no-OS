@@ -76,7 +76,6 @@
 #include "adi_adrv9001_utilities.h"
 #include "adi_adrv9001_version.h"
 #include "adi_common_error_types.h"
-#include "adi_platform_types.h"
 
 /* gpio0 starts at 1 in the API enum */
 #define ADRV9002_DGPIO_MIN	(ADI_ADRV9001_GPIO_DIGITAL_00 - 1)
@@ -367,21 +366,13 @@ static int adrv9002_tx_path_config(struct adrv9002_rf_phy *phy,
 {
 	int ret;
 	unsigned int i;
-	struct adi_adrv9001_TxProfile *profi = phy->curr_profile->tx.txProfile;
 
 	for (i = 0; i < ARRAY_SIZE(phy->tx_channels); i++) {
 		struct adrv9002_tx_chan *tx = &phy->tx_channels[i];
-		struct adi_adrv9001_Info *info = &phy->adrv9001->devStateInfo;
+
 		/* For each tx channel enabled */
 		if (!tx->channel.enabled)
 			continue;
-		/*
-		 * Should this be done by the API? This seems to be needed for
-		 * the NCO tone generation. We need to clarify if this will be
-		 * done by the API in future releases.
-		 */
-		info->txInputRate_kHz[i] = profi[i].txInputRate_Hz / 1000;
-		info->outputSignaling[i] = profi[i].outputSignaling;
 
 		if (!tx->pin_cfg)
 			goto rf_enable;
@@ -467,8 +458,7 @@ static void adrv9002_compute_init_cals(struct adrv9002_rf_phy *phy)
 
 static int adrv9002_validate_profile(struct adrv9002_rf_phy *phy)
 {
-	const struct adi_adrv9001_RxChannelCfg *rx_cfg =
-			phy->curr_profile->rx.rxChannelCfg;
+	const struct adi_adrv9001_RxChannelCfg *rx_cfg = phy->curr_profile->rx.rxChannelCfg;
 	const struct adi_adrv9001_TxProfile *tx_cfg = phy->curr_profile->tx.txProfile;
 	const uint32_t tx_channels[ADRV9002_CHANN_MAX] = {
 		ADI_ADRV9001_TX1, ADI_ADRV9001_TX2
@@ -476,65 +466,142 @@ static int adrv9002_validate_profile(struct adrv9002_rf_phy *phy)
 	const uint32_t rx_channels[ADRV9002_CHANN_MAX] = {
 		ADI_ADRV9001_RX1, ADI_ADRV9001_RX2
 	};
+	const uint32_t orx_channels[ADRV9002_CHANN_MAX] = {
+		ADI_ADRV9001_ORX1, ADI_ADRV9001_ORX2
+	};
 	int i;
-	uint32_t rx0_rate = rx_cfg[0].profile.rxOutputRate_Hz;
 
 	for (i = 0; i < ADRV9002_CHANN_MAX; i++) {
 		struct adrv9002_chan *tx = &phy->tx_channels[i].channel;
-		struct adrv9002_chan *rx = &phy->rx_channels[i].channel;
+		struct adrv9002_rx_chan *rx = &phy->rx_channels[i];
 
 		/* rx validations */
-		if (!ADRV9001_BF_EQUAL(phy->curr_profile->rx.rxInitChannelMask,
-				       rx_channels[i])) {
-			if (phy->rx2tx2 && i == ADRV9002_CHANN_1) {
-				printf("In rx2tx2 mode RX1 must be always enabled...\n");
-				return -EINVAL;
-			}
-
+		if (!ADRV9001_BF_EQUAL(phy->curr_profile->rx.rxInitChannelMask, rx_channels[i]))
 			goto tx;
-		}
 
-		if (phy->rx2tx2 && i && rx_cfg[i].profile.rxOutputRate_Hz != rx0_rate) {
-			printf("In rx2tx2 mode, all ports must have the same rate\n");
+		if (phy->rx2tx2 && i &&
+		    rx_cfg[i].profile.rxOutputRate_Hz != phy->rx_channels[0].channel.rate) {
+			printf("In rx2tx2, RX%d rate=%u must be equal to RX1, rate=%ld\n",
+				i + 1, rx_cfg[i].profile.rxOutputRate_Hz,
+				phy->rx_channels[0].channel.rate);
+			return -EINVAL;
+		} else if (phy->rx2tx2 && i && !phy->rx_channels[0].channel.enabled) {
+			printf("In rx2tx2, RX%d cannot be enabled while RX1 is disabled",
+				i + 1);
 			return -EINVAL;
 		} else if (phy->ssi_type != rx_cfg[i].profile.rxSsiConfig.ssiType) {
 			printf("SSI interface mismatch. PHY=%d, RX%d=%d\n",
-			       phy->ssi_type, i + 1, rx_cfg[i].profile.rxSsiConfig.ssiType);
+				phy->ssi_type, i + 1, rx_cfg[i].profile.rxSsiConfig.ssiType);
+			return -EINVAL;
+		} else if (rx_cfg[i].profile.rxSsiConfig.strobeType == ADI_ADRV9001_SSI_LONG_STROBE) {
+			printf("SSI interface Long Strobe not supported\n");
+			return -EINVAL;
+		} else if (phy->ssi_type == ADI_ADRV9001_SSI_TYPE_LVDS &&
+			   !rx_cfg[i].profile.rxSsiConfig.ddrEn) {
+			printf("RX%d: Single Data Rate port not supported for LVDS\n",
+				i + 1);
 			return -EINVAL;
 		}
 
-		pr_debug("RX%d enabled\n", i + 1);
-
-		rx->power = true;
-		rx->enabled = true;
-		rx->nco_freq = 0;
-		rx->rate = rx_cfg[i].profile.rxOutputRate_Hz;
+		dev_dbg(&phy->spi->dev, "RX%d enabled\n", i + 1);
+		rx->channel.power = true;
+		rx->channel.enabled = true;
+		rx->channel.nco_freq = 0;
+		rx->channel.rate = rx_cfg[i].profile.rxOutputRate_Hz;
 tx:
 		/* tx validations*/
 		if (!ADRV9001_BF_EQUAL(phy->curr_profile->tx.txInitChannelMask, tx_channels[i]))
 			continue;
 
-		if (!rx->enabled) {
-			printf("TX%d cannot be enabled while RX%d is disabled",
-			       i + 1, i + 1);
-			return -EINVAL;
-		} else if (tx_cfg[i].txInputRate_Hz != rx->rate) {
-			printf("TX%d rate=%u must be equal to RX%d, rate=%ld\n",
-			       i + 1, tx_cfg[i].txInputRate_Hz, i + 1, rx->rate);
-			return -EINVAL;
-		} else if (phy->ssi_type != tx_cfg[i].txSsiConfig.ssiType) {
+		/* check @tx_only comments in adrv9002.h to better understand the next checks */
+		if (phy->ssi_type != tx_cfg[i].txSsiConfig.ssiType) {
 			printf("SSI interface mismatch. PHY=%d, TX%d=%d\n",
-			       phy->ssi_type, i + 1,  tx_cfg[i].txSsiConfig.ssiType);
+				phy->ssi_type, i + 1,  tx_cfg[i].txSsiConfig.ssiType);
+			return -EINVAL;
+		} else if (tx_cfg[i].txSsiConfig.strobeType == ADI_ADRV9001_SSI_LONG_STROBE) {
+			printf("SSI interface Long Strobe not supported\n");
+			return -EINVAL;
+		} else if (phy->ssi_type == ADI_ADRV9001_SSI_TYPE_LVDS &&
+			   !tx_cfg[i].txSsiConfig.ddrEn) {
+			printf("TX%d: Single Data Rate port not supported for LVDS\n",
+				i + 1);
+			return -EINVAL;
+		} else if (phy->rx2tx2) {
+			if (!phy->tx_only && !phy->rx_channels[0].channel.enabled) {
+				/*
+				 * pretty much means that in this case either all channels are
+				 * disabled, which obviously does not make sense, or RX1 must
+				 * be enabled...
+				 */
+				printf("In rx2tx2, TX%d cannot be enabled while RX1 is disabled",
+					i + 1);
+				return -EINVAL;
+			} else if (i && !phy->tx_channels[0].channel.enabled) {
+				printf("In rx2tx2, TX%d cannot be enabled while TX1 is disabled",
+					i + 1);
+				return -EINVAL;
+			} else if (!phy->tx_only &&
+				   tx_cfg[i].txInputRate_Hz != phy->rx_channels[0].channel.rate) {
+				/*
+				 * pretty much means that in this case, all ports must have
+				 * the same rate. We match against RX1 since RX2 can be disabled
+				 * even if it does not make much sense to disable it in rx2tx2 mode
+				 */
+				printf("In rx2tx2, TX%d rate=%u must be equal to RX1, rate=%ld\n",
+					i + 1, tx_cfg[i].txInputRate_Hz,
+					phy->rx_channels[0].channel.rate);
+				return -EINVAL;
+			} else if (phy->tx_only && i &&
+				   tx_cfg[i].txInputRate_Hz != phy->tx_channels[0].channel.rate) {
+				printf("In rx2tx2, TX%d rate=%u must be equal to TX1, rate=%ld\n",
+					i + 1, tx_cfg[i].txInputRate_Hz,
+					phy->tx_channels[0].channel.rate);
+				return -EINVAL;
+			}
+		} else if (!phy->tx_only && !rx->channel.enabled) {
+			printf("TX%d cannot be enabled while RX%d is disabled",
+				i + 1, i + 1);
+			return -EINVAL;
+		} else if (!phy->tx_only && tx_cfg[i].txInputRate_Hz != rx->channel.rate) {
+			printf("TX%d rate=%u must be equal to RX%d, rate=%ld\n",
+				i + 1, tx_cfg[i].txInputRate_Hz, i + 1, rx->channel.rate);
 			return -EINVAL;
 		}
 
-		pr_debug("TX%d enabled\n", i + 1);
-
+		dev_dbg(&phy->spi->dev, "TX%d enabled\n", i + 1);
+		/* orx actually depends on whether or not TX is enabled and not RX */
+		rx->orx_en = ADRV9001_BF_EQUAL(phy->curr_profile->rx.rxInitChannelMask,
+					       orx_channels[i]);
 		tx->power = true;
 		tx->enabled = true;
 		tx->nco_freq = 0;
 		tx->rate = tx_cfg[i].txInputRate_Hz;
 	}
+
+	return 0;
+}
+
+static int adrv9002_power_mgmt_config(struct adrv9002_rf_phy *phy)
+{
+	int ret;
+	struct adi_adrv9001_PowerManagementSettings power_mgmt = {
+		.ldoPowerSavingModes = {
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1, ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
+			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1
+		}
+	};
+
+	ret = adi_adrv9001_powermanagement_Configure(phy->adrv9001, &power_mgmt);
+	if (ret)
+		return adrv9002_dev_err(phy);
 
 	return 0;
 }
@@ -623,119 +690,15 @@ static int adrv9002_digital_init(struct adrv9002_rf_phy *phy)
 			return adrv9002_dev_err(phy);
 	}
 
+	ret = adrv9002_power_mgmt_config(phy);
+	if (ret)
+		return adrv9002_dev_err(phy);
+
 	ret = adi_adrv9001_arm_Start(phy->adrv9001);
 	if (ret)
 		return adrv9002_dev_err(phy);
 
 	ret = adi_adrv9001_arm_StartStatus_Check(phy->adrv9001, 5000000);
-	if (ret)
-		return adrv9002_dev_err(phy);
-
-	return 0;
-}
-
-static int adrv9002_power_mgmt_config(struct adrv9002_rf_phy *phy)
-{
-	int ret;
-	struct adi_adrv9001_PowerManagementSettings power_mgmt = {
-		.ldoPowerSavingModes = {
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1,
-			ADI_ADRV9001_LDO_POWER_SAVING_MODE_1
-		},
-		.ldoConfigs = {
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			},
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			},
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			},
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			},
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			},
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			},
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			},
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			},
-			{
-				.shuntResistanceOff = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasOff = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistancePowerSave = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasPowerSave = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT,
-				.shuntResistanceNormal = ADI_ADRV9001_LDO_SHUNT_RESISTANCE_333_OHM,
-				.diffPairBiasNormal = ADI_ADRV9001_LDO_DIFFERENTIAL_PAIR_BIAS_100_PERCENT
-			}
-		}
-	};
-
-	ret = adi_adrv9001_powermanagement_Configure(phy->adrv9001, &power_mgmt);
 	if (ret)
 		return adrv9002_dev_err(phy);
 
@@ -805,12 +768,6 @@ static int adrv9002_radio_init(struct adrv9002_rf_phy *phy)
 		.phaseMargin_degrees = 60,
 		.powerScale = 5
 	};
-	struct adi_adrv9001_arm_MonitorModeRssiCfg monitor_rssi_cfg = {
-		.numberOfMeasurementsToAverage = 4,
-		.measurementsStartPeriod_ms = 1,
-		.detectionThreshold_mdBFS = -80000,
-		.measurementDuration_samples = 10
-	};
 	struct adi_adrv9001_Carrier carrier = {
 		.loGenOptimization = ADI_ADRV9001_LO_GEN_OPTIMIZATION_PHASE_NOISE,
 		.intermediateFrequency_Hz = 0
@@ -828,11 +785,6 @@ static int adrv9002_radio_init(struct adrv9002_rf_phy *phy)
 
 	ret = adi_adrv9001_Radio_PllLoopFilter_Set(phy->adrv9001, ADI_ADRV9001_PLL_AUX,
 			&pll_loop_filter);
-	if (ret)
-		return adrv9002_dev_err(phy);
-
-	ret = adi_adrv9001_arm_MonitorMode_Rssi_Configure(phy->adrv9001,
-			&monitor_rssi_cfg);
 	if (ret)
 		return adrv9002_dev_err(phy);
 
@@ -860,10 +812,6 @@ static int adrv9002_radio_init(struct adrv9002_rf_phy *phy)
 		if (ret)
 			return adrv9002_dev_err(phy);
 	}
-
-	ret = adrv9002_power_mgmt_config(phy);
-	if (ret)
-		return ret;
 
 	ret = adi_adrv9001_arm_System_Program(phy->adrv9001, channel_mask);
 	if (ret)
