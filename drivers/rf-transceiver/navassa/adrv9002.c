@@ -53,6 +53,7 @@
 #include "adi_common_types.h"
 #include "adi_adrv9001_gpio.h"
 #include "adi_adrv9001_gpio_types.h"
+#include "adi_adrv9001_orx.h"
 #include "adi_adrv9001_powermanagement.h"
 #include "adi_adrv9001_powermanagement_types.h"
 #include "adi_adrv9001_profile_types.h"
@@ -503,7 +504,7 @@ static int adrv9002_validate_profile(struct adrv9002_rf_phy *phy)
 			return -EINVAL;
 		}
 
-		dev_dbg(&phy->spi->dev, "RX%d enabled\n", i + 1);
+		pr_debug("RX%d enabled\n", i + 1);
 		rx->channel.power = true;
 		rx->channel.enabled = true;
 		rx->channel.nco_freq = 0;
@@ -568,7 +569,7 @@ tx:
 			return -EINVAL;
 		}
 
-		dev_dbg(&phy->spi->dev, "TX%d enabled\n", i + 1);
+		pr_debug("TX%d enabled\n", i + 1);
 		/* orx actually depends on whether or not TX is enabled and not RX */
 		rx->orx_en = ADRV9001_BF_EQUAL(phy->curr_profile->rx.rxInitChannelMask,
 					       orx_channels[i]);
@@ -609,9 +610,19 @@ static int adrv9002_power_mgmt_config(struct adrv9002_rf_phy *phy)
 static int adrv9002_digital_init(struct adrv9002_rf_phy *phy)
 {
 	int ret;
-	uint8_t mask = 0;
-	const uint32_t valid_profiles = phy->adrv9001->devStateInfo.profilesValid;
-	const uint32_t channels = phy->adrv9001->devStateInfo.initializedChannels;
+	uint8_t tx_mask = 0;
+	int c;
+	/*
+	 * There's still no way of getting the gain table type from the profile. We
+	 * always get the correction one (which was the one we were using already).
+	 * There were some talks and this might change in future versions of the DDAPI so,
+	 * let's force this to correction for now and wait a few release cycles for
+	 * proper support. If we do not get it, we might just add a devicetree attribute
+	 * or some runtime sysfs attr. Not ideal but we won't have any choice if we can't
+	 * get this info from the profile.
+	 */
+	adi_adrv9001_RxGainTableType_e t_type = ADI_ADRV9001_RX_GAIN_CORRECTION_TABLE;
+	adi_adrv9001_RxChannelCfg_t *rx_cfg = phy->curr_profile->rx.rxChannelCfg;
 
 	ret = adi_adrv9001_arm_AhbSpiBridge_Enable(phy->adrv9001);
 	if (ret)
@@ -629,16 +640,14 @@ static int adrv9002_digital_init(struct adrv9002_rf_phy *phy)
 						      phy->stream_size,
 						      ADI_ADRV9001_ARM_SINGLE_SPI_WRITE_MODE_STANDARD_BYTES_252);
 	else
-		ret = adi_adrv9001_Utilities_StreamImage_Load(phy->adrv9001,
-				"Navassa_Stream.bin",
-				ADI_ADRV9001_ARM_SINGLE_SPI_WRITE_MODE_STANDARD_BYTES_252);
+		ret = adi_adrv9001_Utilities_StreamImage_Load(phy->adrv9001, "Navassa_Stream.bin",
+					ADI_ADRV9001_ARM_SINGLE_SPI_WRITE_MODE_STANDARD_BYTES_252);
 	if (ret)
 		return adrv9002_dev_err(phy);
 
 	/* program arm firmware */
-	ret = adi_adrv9001_Utilities_ArmImage_Load(phy->adrv9001,
-			"Navassa_EvaluationFw.bin",
-			ADI_ADRV9001_ARM_SINGLE_SPI_WRITE_MODE_STANDARD_BYTES_252);
+	ret = adi_adrv9001_Utilities_ArmImage_Load(phy->adrv9001, "Navassa_EvaluationFw.bin",
+					ADI_ADRV9001_ARM_SINGLE_SPI_WRITE_MODE_STANDARD_BYTES_252);
 	if (ret)
 		return adrv9002_dev_err(phy);
 
@@ -651,48 +660,43 @@ static int adrv9002_digital_init(struct adrv9002_rf_phy *phy)
 		return adrv9002_dev_err(phy);
 
 	/* Load gain tables */
-	if ((ADRV9001_BF_EQUAL(valid_profiles, ADI_ADRV9001_ORX_PROFILE_VALID)) ||
-	    (ADRV9001_BF_EQUAL(valid_profiles, ADI_ADRV9001_TX_PROFILE_VALID))) {
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_ORX1) ? ADI_CHANNEL_1 : 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_ORX2) ? ADI_CHANNEL_2 : 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_TX1) ? ADI_CHANNEL_1 : 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_TX2) ? ADI_CHANNEL_2 : 0;
+	for (c = 0; c < ADRV9002_CHANN_MAX; c++) {
+		struct adrv9002_rx_chan *rx = &phy->rx_channels[c];
+		struct adrv9002_tx_chan *tx = &phy->tx_channels[c];
+		adi_adrv9001_RxProfile_t *p = &rx_cfg[c].profile;
 
-		ret = adi_adrv9001_Utilities_RxGainTable_Load(phy->adrv9001, "ORxGainTable.csv",
-				mask);
+		if (rx->orx_en || tx->channel.enabled) {
+			ret = adi_adrv9001_Utilities_RxGainTable_Load(phy->adrv9001, ADI_ORX,
+								      "ORxGainTable.csv",
+								      rx->channel.number,
+								      &p->lnaConfig, t_type);
+			if (ret)
+				return adrv9002_dev_err(phy);
+		}
+
+		if (tx->channel.enabled)
+			tx_mask |= tx->channel.number;
+
+		if (!rx->channel.enabled)
+			continue;
+
+		ret = adi_adrv9001_Utilities_RxGainTable_Load(phy->adrv9001, ADI_RX,
+							      "RxGainTable.csv", rx->channel.number,
+							      &p->lnaConfig, t_type);
 		if (ret)
 			return adrv9002_dev_err(phy);
 	}
 
-	if ((ADRV9001_BF_EQUAL(valid_profiles, ADI_ADRV9001_RX_PROFILE_VALID)) ||
-	    (ADRV9001_BF_EQUAL(valid_profiles, ADI_ADRV9001_TX_PROFILE_VALID))) {
-		mask = 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_RX1) ? ADI_CHANNEL_1 : 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_RX2) ? ADI_CHANNEL_2 : 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_TX1) ? ADI_CHANNEL_1 : 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_TX2) ? ADI_CHANNEL_2 : 0;
-
-		ret = adi_adrv9001_Utilities_RxGainTable_Load(phy->adrv9001, "RxGainTable.csv",
-				mask);
-		if (ret)
-			return adrv9002_dev_err(phy);
-	}
-
-	if (ADRV9001_BF_EQUAL(valid_profiles, ADI_ADRV9001_TX_PROFILE_VALID)) {
-		mask = 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_TX1) ? ADI_CHANNEL_1 : 0;
-		mask |= ADRV9001_BF_EQUAL(channels, ADI_ADRV9001_TX2) ? ADI_CHANNEL_2 : 0;
-
-		ret = adi_adrv9001_Utilities_TxAttenTable_Load(phy->adrv9001,
-				"TxAttenTable.csv",
-				mask);
+	if (tx_mask) {
+		ret = adi_adrv9001_Utilities_TxAttenTable_Load(phy->adrv9001, "TxAttenTable.csv",
+							       tx_mask);
 		if (ret)
 			return adrv9002_dev_err(phy);
 	}
 
 	ret = adrv9002_power_mgmt_config(phy);
 	if (ret)
-		return adrv9002_dev_err(phy);
+		return ret;
 
 	ret = adi_adrv9001_arm_Start(phy->adrv9001);
 	if (ret)
@@ -828,8 +832,19 @@ int adrv9002_setup(struct adrv9002_rf_phy *phy,
 	int ret;
 	unsigned int c;
 	uint8_t init_cals_error = 0;
-	adi_adrv9001_gpMaskArray_t gp_mask;
 	adi_adrv9001_ChannelState_e init_state;
+	struct adrv9002_chan *chan;
+
+	/*
+	 * Disable all the cores as it might interfere with init calibrations.
+	 */
+	for (c = 0; c < ARRAY_SIZE(phy->channels); c++) {
+		chan = phy->channels[c];
+
+		if (phy->rx2tx2 && chan->idx > ADRV9002_CHANN_1)
+			break;
+		adrv9002_axi_interface_enable(phy, chan->idx, chan->port == ADI_TX, false);
+	}
 
 	phy->curr_profile = adrv9002_init;
 
@@ -909,9 +924,7 @@ int adrv9002_setup(struct adrv9002_rf_phy *phy,
 		return ret;
 
 	/* unmask IRQs */
-	gp_mask.gpIntMask = ~ADRV9002_IRQ_MASK;
-	ret = adi_adrv9001_gpio_GpIntMask_Set(adrv9001_device,
-					      ADI_ADRV9001_GPINT, &gp_mask);
+	ret = adi_adrv9001_gpio_GpIntMask_Set(adrv9001_device, ~ADRV9002_IRQ_MASK);
 	if (ret)
 		return adrv9002_dev_err(phy);
 
