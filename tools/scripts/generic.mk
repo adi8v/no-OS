@@ -348,9 +348,12 @@ post_build:
 PHONY += update_srcs
 update_srcs: $(PROJECT_TARGET)
 	@$(call print, $(ACTION) srcs to created project)
+<<<<<<< HEAD
 ifneq ($(wildcard $(DIRS_TO_REMOVE)),)
 	$(MUTE) $(call remove_dir,$(wildcard $(DIRS_TO_REMOVE))) $(HIDE)
 endif
+=======
+>>>>>>> 9703c94c (Changes to get build working)
 	$(MUTE) -$(call mk_dir,$(DIRS_TO_CREATE)) $(HIDE)
 	$(MUTE) $(foreach dir,$(sort $(SRC_DIRS)),\
 		$(call folder_fun,$(dir),$(call relative_to_project,$(dir))) $(HIDE)\
