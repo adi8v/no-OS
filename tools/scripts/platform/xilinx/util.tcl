@@ -125,7 +125,7 @@ proc _xsdk_project {} {
 		-proc $cpu						\
 		-os standalone						\
 		-lang C							\
-		-app {Empty Application}				\
+		-app {Empty Application(C)}				\
 		-bsp bsp
 	
 	closehw $::hw
