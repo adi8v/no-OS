@@ -61,7 +61,9 @@
  * @enum xil_spi_type
  * @brief Xilinx platform architecture sections
  */
-enum xil_spi_type {
+ // APH
+// enum xil_spi_type {
+typedef enum xil_spi_type {
 	/** Programmable Logic */
 	SPI_PL,
 	/** Processing System */
