@@ -57,6 +57,7 @@
 #include "axi_dmac.h"
 #include "parameters.h"
 #include "app_config.h"
+#include "xil_printf.h"
 
 #ifdef IIO_SUPPORT
 #include "iio_app.h"
@@ -215,7 +216,7 @@ int main(void)
 	int32_t status;
 	int32_t i;
 
-	printf("Hello\n");
+	printf("Hello AD9081\n");
 
 #ifdef QUAD_MXFE
 	struct xil_gpio_init_param  xil_gpio_param_2 = {

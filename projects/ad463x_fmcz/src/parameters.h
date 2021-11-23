@@ -62,5 +62,60 @@
 #define UART_IRQ_ID				XPAR_XUARTPS_1_INTR
 #define INTC_DEVICE_ID			XPAR_SCUGIC_SINGLE_DEVICE_ID
 #endif
+<<<<<<< HEAD:projects/ad463x_fmcz/src/parameters.h
+=======
+	};
+	struct uart_init_param uart_init_par = {
+		.baud_rate = 115200,
+		.device_id = UART_DEVICE_ID,
+		.extra = &xil_uart_init_par,
+	};
+
+	struct iio_init_param iio_init_par;
+	struct iio_desc *iio_app_desc;
+	struct iio_axi_adc_desc *iio_axi_adc_desc;
+	struct iio_axi_dac_desc *iio_axi_dac_desc;
+	struct iio_device *adc_dev_desc, *dac_dev_desc;
+	int32_t status;
+
+	status = uart_init(&uart_desc, &uart_init_par);
+	if (status < 0) {
+		printf("uart_init() error");
+		return status;
+	}
+
+	iio_init_par.phy_type = USE_UART;
+	iio_init_par.uart_desc = uart_desc;
+	status = iio_init(&iio_app_desc, &iio_init_par);
+	if (status < 0)
+		return status;
+
+	status = iio_axi_adc_init(&iio_axi_adc_desc, adc_init);
+	if (status < 0)
+		return status;
+
+	iio_axi_adc_get_dev_descriptor(iio_axi_adc_desc, &adc_dev_desc);
+	status = iio_register(iio_app_desc, adc_dev_desc, "axi_adc",
+			      iio_axi_adc_desc, &g_read_buff, NULL);
+	if (status < 0)
+		return status;
+
+
+	status = iio_axi_dac_init(&iio_axi_dac_desc, dac_init);
+	if (status < 0)
+		return status;
+	iio_axi_dac_get_dev_descriptor(iio_axi_dac_desc, &dac_dev_desc);
+	status = iio_register(iio_app_desc, dac_dev_desc, "axi_dac",
+			      iio_axi_dac_desc, NULL, &g_write_buff);
+	if (status < 0)
+		return status;
+
+	do {
+		status = iio_step(iio_app_desc);
+		if (status < 0)
+			return status;
+
+	} while (true);
+>>>>>>> 9cee699e (Minor changes to get things compiling for ZCU216):projects/ad9081/src/app_iio.c
 
 #endif /* SRC_PARAMETERS_H_ */

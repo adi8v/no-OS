@@ -13,7 +13,7 @@ dfp_drivers
 aducm_project
 aducm_build
 .vscode
-
+*.str
 *.a
 *.o
 *.d
@@ -22,5 +22,6 @@ aducm_build
 *.xsa
 *.sof
 *.sopcinfo
-
+*.jou
+*.log
 local_variables.mk
