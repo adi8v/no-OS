@@ -14,7 +14,7 @@ aducm_project
 aducm_build
 .vscode
 .Xil
-
+*.str
 *.a
 *.o
 *.d
@@ -23,5 +23,6 @@ aducm_build
 *.xsa
 *.sof
 *.sopcinfo
-
+*.jou
+*.log
 local_variables.mk

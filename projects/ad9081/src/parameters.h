@@ -44,9 +44,13 @@
 /******************************************************************************/
 /********************** Macros and Constants Definitions **********************/
 /******************************************************************************/
+<<<<<<< HEAD:projects/ad9081/src/parameters.h
 #define UART_BAUDRATE 115200
 
 #ifdef XPS_BOARD_ZCU102
+=======
+#ifdef XPS_BOARD_ZCU216
+>>>>>>> 9cee699e (Minor changes to get things compiling for ZCU216):projects/ad9081/src/app_parameters.h
 #define GPIO_OFFSET		78
 #else
 #define GPIO_OFFSET		0
@@ -70,6 +74,7 @@
 #define PHY_RESET		(GPIO_OFFSET + 55)
 #endif
 
+<<<<<<< HEAD:projects/ad9081/src/parameters.h
 #if defined(PLATFORM_MB)
 #define GPIO_DEVICE_ID		XPAR_AXI_GPIO_DEVICE_ID
 #define PHY_SPI_DEVICE_ID	XPAR_AXI_SPI_DEVICE_ID
@@ -80,6 +85,9 @@
 #define CLK_CS			1
 #elif defined(PLATFORM_ZYNQMP)
 #define INTC_DEVICE_ID		XPAR_SCUGIC_SINGLE_DEVICE_ID
+=======
+#ifdef PLATFORM_ZYNQMP
+>>>>>>> 9cee699e (Minor changes to get things compiling for ZCU216):projects/ad9081/src/app_parameters.h
 #define GPIO_DEVICE_ID		XPAR_PSU_GPIO_0_DEVICE_ID
 #define PHY_SPI_DEVICE_ID	XPAR_PSU_SPI_0_DEVICE_ID
 #define CLK_SPI_DEVICE_ID	XPAR_PSU_SPI_1_DEVICE_ID
