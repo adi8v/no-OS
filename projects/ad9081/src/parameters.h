@@ -46,7 +46,11 @@
 /******************************************************************************/
 #define UART_BAUDRATE 115200
 
+<<<<<<< HEAD
 #if defined XPS_BOARD_ZCU216 || XPS_BOARD_ZCU102
+=======
+#ifdef XPS_BOARD_ZCU216 || XPS_BOARD_ZCU102
+>>>>>>> 7434914a (Fixing parameters.h)
 #define GPIO_OFFSET		78
 #else
 #define GPIO_OFFSET		0
