@@ -387,6 +387,7 @@ int32_t xilinx_xcvr_check_lane_rate(struct xilinx_xcvr *xcvr,
 
 		case XILINX_XCVR_TYPE_US_GTY4:
 
+<<<<<<< HEAD
 			/* ds923 Virtex UltraScale+ FPGA Data Sheet: DC and AC Switching Characteristics v1.19 Table 52 */
 			if (voltage == 900 && speed_grade == 3)
 				lane_rate_max_khz = 32750000;
@@ -395,6 +396,16 @@ int32_t xilinx_xcvr_check_lane_rate(struct xilinx_xcvr *xcvr,
 			else if (voltage == 850 && speed_grade == 1)
 				lane_rate_max_khz = 25785000;
 			else if (voltage == 720 && speed_grade == 2)
+=======
+			/* ds893 Virtex UltraScale FPGAs Data Sheet: DC and AC Switching Characteristics v1.12 Table 69 */
+			/* ds926 Zynq Ultrascale+ RFSoC Data Sheet: DC and AC Switching Characteristics v1.8 Table 100 */
+			if (voltage == 1000 && speed_grade == 3)
+				lane_rate_max_khz = 30500000;
+			else if (voltage == 1000 && speed_grade == 1)
+				lane_rate_max_khz = 25800000;
+			else if ((voltage == 950 && speed_grade == 2) ||
+					(voltage == 850 && speed_grade == 2))		/* ZU */
+>>>>>>> 35e2fe2c (RFSoC voltage/speed grade combo added)
 				lane_rate_max_khz = 28210000;
 			else
 				return FAILURE;
