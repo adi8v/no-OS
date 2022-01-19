@@ -387,7 +387,6 @@ int32_t xilinx_xcvr_check_lane_rate(struct xilinx_xcvr *xcvr,
 
 		case XILINX_XCVR_TYPE_US_GTY4:
 
-<<<<<<< HEAD
 			/* ds923 Virtex UltraScale+ FPGA Data Sheet: DC and AC Switching Characteristics v1.19 Table 52 */
 			/* ds926 Zynq Ultrascale+ RFSoC Data Sheet: DC and AC Switching Characteristics v1.8 Table 100 */
 			if (voltage == 900 && speed_grade == 3)
